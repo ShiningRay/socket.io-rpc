@@ -1,0 +1,107 @@
+<html>
+<head>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script type="text/javascript">
+	// Broker for client side
+	class Broker  {
+		// TODO: options, timeout, event prefix
+		constructor (socket) {
+			this.jobs = {};
+			this.socket = socket;
+			this.resolving = {};
+			this.seqId = 0;
+			
+			// resolve rpc result to local invoker
+			socket.on('result', (requestId, result) => {
+				if(this.jobs[requestId]){
+					this.jobs[requestId].resolve(result);
+					clearTimeout(this.jobs[requestId].timeout);
+					delete this.jobs[requestId];
+				}
+			});
+			
+			// resolve remote event to local delegate
+			socket.on('event', (pid, eventName, args) => {
+				var obj = this.resolveDelegator(pid);
+				if (obj) {
+					obj.emit(eventName, args);
+				}
+			});
+			
+			socket.on('resolved', (pid, methods) => {
+				var j = this.resolving[pid];
+				if(j){
+					j.resolve(methods);
+					clearTimeout(this.resolving[pid].timeout);
+					delete this.resolving[pid];
+				}
+			});
+		}
+		
+		// find out local delegate according to pid
+		resolveDelegate(pid){
+			return new Proimse((resolve, reject) => {
+				this.socket.emit('resolve', pid);
+				var timeout = setTimeout(function(){
+					reject(new Error('resolving timeout'));
+				}, 10000);
+				this.resolving[pid] = {
+					resolve, reject, pid, timeout
+				}
+				
+			});
+			// return Promise.reject(new Error('cannot find origin'));
+		}
+		
+		
+		// generate delegate object according to descriptor object
+		// 
+		generateDelegate(descriptor){
+			var delegate = new EventEmitter();
+			
+			descriptor.methods.forEach((name) => {
+				delegate[name] = function(...args) {
+					return this._broker.invoke(this.pid, name, args);
+				}
+			});
+			return delegate;
+		}
+		
+		invoke(objid, method, args){
+			var reqId = this.seqId++;
+			// this.validate(args); // prevent some over complex class or types
+			if(!(args instanceof Array)){
+				args = [args];
+			}
+			this.socket.emit('call', reqId , objid, method, args);
+			
+			// handle timeout
+			var timer = setTimeout(this.timeout.bind(this), 10000, reqId);
+			return new Promise((resolve, reject) => {
+				this.jobs[reqId] = {
+					resolve: resolve,
+					reject: reject,
+					timeout: timer
+				}
+			});
+		}
+		
+		timeout(uuid) {
+			this.jobs[uuid].reject(new Error('timeout'));
+			delete this.jobs[uuid];
+		}
+	}	
+	var socket = io.connect('http://localhost:8080/');
+
+	var broker = new Broker(socket);
+	socket.on('connect', function(){
+    	broker.invoke('test', 'test', 1).then( (res) => console.log(res) );
+	});
+
+
+</script>
+</head>
+<body></body>
+</html>
