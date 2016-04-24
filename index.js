@@ -11,7 +11,9 @@ class Actor extends EventEmitter {
   constructor (data) {
     // register self to the registry
     // dispatcher will find this object from registry
+	super();
 	this._data = data;
+	Actor.dispatcher.register(this);
   }
 
   // save state for later use
@@ -26,61 +28,52 @@ class Actor extends EventEmitter {
 
   // send events to the delegator in clients
   emit (eventName, args) {
+	//   this.emit(eventName, args);
 	  this._dispatcher.proxyEvent(this, eventName, args); 
   }
   
-  pid(){
-	  return [this.getClassName(), this._id];
+  pid () {
+	  return this._pid;
+  }
+  
+  getClassName(){
+	  return this.constructor.name;
   }
 }
 
+
+var shortid = require('shortid');
 // central registry
 // should always be passive
 class Registry {
-	constructor(){
+	constructor(dispatcher){
 		this._factories = {}
 		this._registry = {}
-	}
-	
-	static getInstance(){
-		if(!this._instance){
-			this._instance = new Registry();
-		}
-		return this._instance;
+		this._dispatcher = dispatcher;
 	}
 	
 	// register a singleton
 	register (name, object) {
+		if(typeof object == 'undefined'){
+			object = name;
+			name = shortid.generate();
+		}
 		this._registry[name] = object;
+		
+		object._dispatcher = this._dispatcher;
+		object._pid = name;
 	}
-	
-	// register a factory for a type object
-	registerFactory(typename, factory){
-		this.factorie[typename] = factory;
-	}
-	
-	
 	
 	// find corresponding actor 
 	resolve(pid){
 		if( this._registry[pid] ){
 			return this._registry[pid];
-		} else {
-			if (this._registry[pid.type][pid.id]) {
-				return this._registry[pid.type][pid.id];
-			} else {
-				if (this._factories[pid.type]){
-					var actor = this._factories[pid.type](pid);
-					this._registry[pid.type][pid.id] = actor;
-				}
-			}
 		}
 	}
 	
-	
 	// remove actor from registry
 	unregister(pid){
-		
+		delete this._registry[pid];
 	}
 }
 
@@ -89,17 +82,26 @@ class Registry {
 class Dispatcher extends EventEmitter {
 	// private socket; // Socket.io socket
 	
-	constructor (socket) {
+	constructor (server) {
 		super();
-		this.socket = socket;
-		var registry = Registry.getInstance();
-		
+		this.server = server;
+		this.registry = new Registry(this);
+		Actor.dispatcher = this;
+		server.on('connection', this.handleConnection.bind(this));
+	}
+	
+	register(name, object) {
+		return this.registry.register(name, object);
+	}
+	
+	handleConnection (socket) {
 		socket.on('call', (requestId, objid, method, args) => {
-			var obj = registry.resolve(objid);
+			var obj = this.registry.resolve(objid);
 			if(typeof obj[method] == 'function'){
 				if(! (args instanceof Array)){
 					args = [args];
 				}
+				
 				try {
 					var r = obj[method].apply(obj, args);
 				} catch (e) {
@@ -120,6 +122,7 @@ class Dispatcher extends EventEmitter {
 				socket.emit('error', requestId, 'no such[method]');
 			}
 		});
+				
 	}
 	
 	proxyEvent (origin, eventName, args) {
@@ -132,11 +135,16 @@ class Dispatcher extends EventEmitter {
 
 const express = require('express');
 
-var Test = {
-	test: function(num){
-		console.log("test", num);
-		
-		return 100;
+class Car extends Actor {
+	weight () {
+		return this._data.weight;
+	}
+}
+
+class CarController extends Actor {
+	find(id){
+		var car = new Car({weight: 100});
+		return Promise.resolve(car.pid());
 	}
 }
 
@@ -148,10 +156,7 @@ function start(){
   var port = 8080;
   
   server.listen(port);
-  io.on('connection', function(socket){
-	  var dispatcher = new Dispatcher(socket);
-  });
+  var dispatcher = new Dispatcher(io);
+  dispatcher.register('car', new CarController());
 }
-var registry = Registry.getInstance();
-registry.register('test', Test);
 start();

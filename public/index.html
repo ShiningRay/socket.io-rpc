@@ -58,7 +58,7 @@
 		
 		// generate delegate object according to descriptor object
 		// 
-		generateDelegate(descriptor){
+		delegate(){
 			var delegate = new EventEmitter();
 			
 			descriptor.methods.forEach((name) => {
@@ -97,7 +97,11 @@
 
 	var broker = new Broker(socket);
 	socket.on('connect', function(){
-    	broker.invoke('test', 'test', 1).then( (res) => console.log(res) );
+    	broker.invoke('car', 'find', 1).then( 
+			(pid) =>  broker.invoke(pid, 'weight')
+		).then( 
+			(weight) => console.log(weight) 
+		);
 	});
 
 
